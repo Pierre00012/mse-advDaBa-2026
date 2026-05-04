@@ -6,11 +6,11 @@ services:
       - "7687:7687"
     networks:
       internal:
-        ipv4_address: 172.24.0.10
+        ipv4_address: 172.31.0.10
     volumes:
-      - $PWD/neo4j_mount/data:/data
-      - $PWD/neo4j_mount/logs:/logs
-      - $PWD/neo4j_mount/conf:/conf
+      - ./neo4j_mount/data:/data
+      - ./neo4j_mount/logs:/logs
+      - ./neo4j_mount/conf:/conf
     environment:
       - NEO4J_AUTH=neo4j/test
     deploy:
@@ -25,11 +25,11 @@ services:
     networks:
       - internal
     volumes:
-      - $PWD/dblpExample.jsonl:/file.jsonl
+      - ./dblpExample.jsonl:/file.jsonl
     environment:
       - JSON_FILE=/file.jsonl
       - MAX_NODES=10000
-      - NEO4J_IP=172.24.0.10 # must be the same as above
+      - NEO4J_IP=172.31.0.10
     deploy:
       resources:
         limits:
@@ -40,4 +40,4 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: "172.24.0.0/24"
+        - subnet: "172.31.0.0/24"
