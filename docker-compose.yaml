@@ -27,8 +27,8 @@ services:
     volumes:
       - ./dblpExample.jsonl:/file.jsonl
     environment:
-      - JSON_FILE=/file.jsonl
-      - MAX_NODES=10000
+      - JSON_FILE=http://vmrum.isc.heia-fr.ch/files/DBLP-Citation-network-V18.jsonl
+      - MAX_NODES=50000
       - NEO4J_IP=172.31.0.10
     deploy:
       resources:

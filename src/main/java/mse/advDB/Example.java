@@ -2,8 +2,8 @@ package mse.advDB;
 
 import org.neo4j.driver.*;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
+import java.io.*;
+import java.net.URL;
 import java.util.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -25,12 +25,10 @@ public class Example {
         System.out.println("NEO4J_IP = " + neo4jIP);
         System.out.println("MAX_NODES = " + maxNodes);
 
-
         Driver driver = GraphDatabase.driver(
                 "bolt://" + neo4jIP + ":7687",
                 AuthTokens.basic("neo4j", "test")
         );
-
 
         boolean connected = false;
         while (!connected) {
@@ -46,7 +44,17 @@ public class Example {
 
         ObjectMapper mapper = new ObjectMapper();
 
-        // batch
+        BufferedReader br;
+
+        if (jsonPath.startsWith("http")) {
+            System.out.println("Streaming from URL...");
+            URL url = new URL(jsonPath);
+            br = new BufferedReader(new InputStreamReader(url.openStream()));
+        } else {
+            System.out.println("Reading local file...");
+            br = new BufferedReader(new FileReader(jsonPath));
+        }
+
         List<Map<String, Object>> articleBatch = new ArrayList<>();
         List<Map<String, Object>> authorBatch = new ArrayList<>();
         List<Map<String, Object>> authoredBatch = new ArrayList<>();
@@ -54,14 +62,22 @@ public class Example {
 
         int count = 0;
 
-        try (BufferedReader br = new BufferedReader(new FileReader(jsonPath));
-             Session session = driver.session()) {
+        Session session = driver.session();
+
+        try {
 
             String line;
 
             while ((line = br.readLine()) != null && count < maxNodes) {
 
-                JsonNode json = mapper.readTree(line);
+                JsonNode json = null;
+                try {
+                    json = mapper.readTree(line);
+                } catch (Exception e) {
+                    System.err.println("Skipped invalid JSON at line " + (count + 1) + ": " + e.getMessage());
+                    count++;
+                    continue;
+                }
 
                 // Article
                 String articleId = json.has("_id")
@@ -70,12 +86,12 @@ public class Example {
 
                 String title = json.has("title") ? json.get("title").asText() : "";
 
-                articleBatch.add(new HashMap<String, Object>() {{
-                    put("id", articleId);
-                    put("title", title);
-                }});
+                Map<String, Object> articleMap = new HashMap<>();
+                articleMap.put("id", articleId);
+                articleMap.put("title", title);
+                articleBatch.add(articleMap);
 
-                // autheurs
+                // Auteurs
                 if (json.has("authors")) {
                     for (JsonNode a : json.get("authors")) {
 
@@ -85,26 +101,26 @@ public class Example {
 
                         String name = a.has("name") ? a.get("name").asText() : "";
 
-                        authorBatch.add(new HashMap<String, Object>() {{
-                            put("id", aid);
-                            put("name", name);
-                        }});
+                        Map<String, Object> authorMap = new HashMap<>();
+                        authorMap.put("id", aid);
+                        authorMap.put("name", name);
+                        authorBatch.add(authorMap);
 
-                        authoredBatch.add(new HashMap<String, Object>() {{
-                            put("aid", aid);
-                            put("pid", articleId);
-                        }});
+                        Map<String, Object> relMap = new HashMap<>();
+                        relMap.put("aid", aid);
+                        relMap.put("pid", articleId);
+                        authoredBatch.add(relMap);
                     }
                 }
 
-                // reference
+                // Cite
                 if (json.has("references")) {
                     for (JsonNode r : json.get("references")) {
 
-                        citesBatch.add(new HashMap<String, Object>() {{
-                            put("from", articleId);
-                            put("to", r.asText());
-                        }});
+                        Map<String, Object> citeMap = new HashMap<>();
+                        citeMap.put("from", articleId);
+                        citeMap.put("to", r.asText());
+                        citesBatch.add(citeMap);
                     }
                 }
 
@@ -112,48 +128,47 @@ public class Example {
 
                 if (articleBatch.size() >= 200) {
 
-                    List<Map<String, Object>> aBatch = new ArrayList<>(articleBatch);
-                    List<Map<String, Object>> auBatch = new ArrayList<>(authorBatch);
-                    List<Map<String, Object>> authBatch = new ArrayList<>(authoredBatch);
-                    List<Map<String, Object>> cBatch = new ArrayList<>(citesBatch);
+                    final List<Map<String, Object>> aBatch = new ArrayList<>(articleBatch);
+                    final List<Map<String, Object>> auBatch = new ArrayList<>(authorBatch);
+                    final List<Map<String, Object>> authBatch = new ArrayList<>(authoredBatch);
+                    final List<Map<String, Object>> cBatch = new ArrayList<>(citesBatch);
 
-                    session.writeTransaction(tx -> {
+                    session.writeTransaction(new TransactionWork<Void>() {
+                        @Override
+                        public Void execute(Transaction tx) {
 
-                        // Articles
-                        tx.run(
-                                "UNWIND $batch AS row " +
-                                        "MERGE (a:ARTICLE {id: row.id}) " +
-                                        "SET a.title = row.title",
-                                parameters("batch", aBatch)
-                        );
+                            tx.run(
+                                    "UNWIND $batch AS row " +
+                                            "MERGE (a:ARTICLE {id: row.id}) " +
+                                            "SET a.title = row.title",
+                                    parameters("batch", aBatch)
+                            );
 
-                        // Authors
-                        tx.run(
-                                "UNWIND $batch AS row " +
-                                        "MERGE (a:AUTHOR {id: row.id}) " +
-                                        "SET a.name = row.name",
-                                parameters("batch", auBatch)
-                        );
+                            tx.run(
+                                    "UNWIND $batch AS row " +
+                                            "MERGE (a:AUTHOR {id: row.id}) " +
+                                            "SET a.name = row.name",
+                                    parameters("batch", auBatch)
+                            );
 
-                        // Authored
-                        tx.run(
-                                "UNWIND $batch AS r " +
-                                        "MATCH (a:AUTHOR {id: r.aid}) " +
-                                        "MATCH (p:ARTICLE {id: r.pid}) " +
-                                        "MERGE (a)-[:AUTHORED]->(p)",
-                                parameters("batch", authBatch)
-                        );
+                            tx.run(
+                                    "UNWIND $batch AS r " +
+                                            "MATCH (a:AUTHOR {id: r.aid}) " +
+                                            "MATCH (p:ARTICLE {id: r.pid}) " +
+                                            "MERGE (a)-[:AUTHORED]->(p)",
+                                    parameters("batch", authBatch)
+                            );
 
-                        // Cites
-                        tx.run(
-                                "UNWIND $batch AS r " +
-                                        "MERGE (a:ARTICLE {id: r.from}) " +
-                                        "MERGE (b:ARTICLE {id: r.to}) " +
-                                        "MERGE (a)-[:CITES]->(b)",
-                                parameters("batch", cBatch)
-                        );
+                            tx.run(
+                                    "UNWIND $batch AS r " +
+                                            "MERGE (a:ARTICLE {id: r.from}) " +
+                                            "MERGE (b:ARTICLE {id: r.to}) " +
+                                            "MERGE (a)-[:CITES]->(b)",
+                                    parameters("batch", cBatch)
+                            );
 
-                        return null;
+                            return null;
+                        }
                     });
 
                     System.out.println("Flushed at: " + count);
@@ -164,50 +179,16 @@ public class Example {
                     citesBatch.clear();
                 }
             }
-            if (!articleBatch.isEmpty()) {
 
-                session.writeTransaction(tx -> {
-
-                    tx.run(
-                            "UNWIND $batch AS row " +
-                                    "MERGE (a:ARTICLE {id: row.id}) " +
-                                    "SET a.title = row.title",
-                            parameters("batch", articleBatch)
-                    );
-
-                    tx.run(
-                            "UNWIND $batch AS row " +
-                                    "MERGE (a:AUTHOR {id: row.id}) " +
-                                    "SET a.name = row.name",
-                            parameters("batch", authorBatch)
-                    );
-
-                    tx.run(
-                            "UNWIND $batch AS r " +
-                                    "MATCH (a:AUTHOR {id: r.aid}) " +
-                                    "MATCH (p:ARTICLE {id: r.pid}) " +
-                                    "MERGE (a)-[:AUTHORED]->(p)",
-                            parameters("batch", authoredBatch)
-                    );
-
-                    tx.run(
-                            "UNWIND $batch AS r " +
-                                    "MERGE (a:ARTICLE {id: r.from}) " +
-                                    "MERGE (b:ARTICLE {id: r.to}) " +
-                                    "MERGE (a)-[:CITES]->(b)",
-                            parameters("batch", citesBatch)
-                    );
-
-                    return null;
-                });
-            }
-
+        } finally {
+            br.close();
+            session.close();
         }
 
         long endTime = System.currentTimeMillis();
 
         System.out.println("DONE");
-        System.out.println("TOTAL NODES = " + count);
+        System.out.println("TOTAL ARTICLES = " + count);
         System.out.println("TIME (s) = " + (endTime - startTime) / 1000);
 
         driver.close();
