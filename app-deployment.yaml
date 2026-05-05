@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-app
+  namespace: adv-da-ba26-km-ma
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: java-app
+  template:
+    metadata:
+      labels:
+        app: java-app
+    spec:
+      containers:
+        - name: java-app
+          image: my-java-app:latest
+          imagePullPolicy: Never
+          env:
+            - name: JSON_FILE
+              value: "http://vmrum.isc.heia-fr.ch/files/DBLP-Citation-network-V18.jsonl"
+            - name: NEO4J_IP
+              value: "neo4j-service.adv-da-ba26-km-ma.svc.cluster.local"
+            - name: MAX_NODES
+              value: "50000"
