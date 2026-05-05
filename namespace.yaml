@@ -1,3 +1,4 @@
+#namespace utilisé en local
 apiVersion: v1
 kind: Namespace
 metadata:
